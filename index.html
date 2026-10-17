@@ -85,6 +85,15 @@ button:disabled{opacity:.5;cursor:default}
 .btres{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .note{font-size:13px;color:var(--muted);max-width:70ch}
 #tv{height:440px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tab{text-align:left;padding:12px 14px;border-radius:8px;display:grid;gap:2px;min-width:0}
+.tab .tn{font-size:13px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
+.tab .tv{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:20px;font-weight:600}
+.tab .td{font-size:12px;color:var(--muted)}
+.tab[aria-selected="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin-bottom:6px;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:6px}
 @media (max-width:500px){#tv{height:340px}}
 </style>
 </head>
@@ -103,6 +112,8 @@ button:disabled{opacity:.5;cursor:default}
     <div class="note num" id="lastRun"></div>
   </div>
 
+  <div class="tabs" id="tabs" role="tablist" aria-label="Choisir le portefeuille"></div>
+
   <div id="banner" hidden></div>
 
   <section class="kpis">
@@ -114,7 +125,8 @@ button:disabled{opacity:.5;cursor:default}
   </section>
 
   <section class="panel">
-    <h2>Évolution du portefeuille</h2>
+    <h2>Évolution des deux portefeuilles</h2>
+    <div class="legend" id="legend"></div>
     <canvas id="chart" aria-label="Courbe de la valeur du portefeuille"></canvas>
   </section>
 
@@ -148,6 +160,7 @@ button:disabled{opacity:.5;cursor:default}
       <li><b>Coupe-circuit à −20 %</b><span>Tout est vendu et le bot s'arrête définitivement.</span></li>
       <li><b>Frais simulés</b><span>0,1 % par ordre + 0,05 % de glissement, comme sur un vrai compte.</span></li>
     </ul>
+    <p class="note" style="margin-top:14px"><b>Les deux portefeuilles :</b> ils suivent exactement les mêmes signaux et les mêmes règles de sécurité. Seule la mise change. Le <b>bot prudent</b> mise toujours 25 %. Le <b>bot rattrapage</b> double sa mise après chaque perte pour se refaire (25 %, puis 50 %, puis 100 % du portefeuille) et revient à 25 % dès qu'il gagne. C'est le principe de la martingale.</p>
     <p class="note" style="margin-top:14px"><b>La stratégie :</b> toutes les 5 minutes, le bot compare la moyenne des prix récents (9 bougies) à une moyenne plus lente (21 bougies). Il achète quand la rapide passe au-dessus de la lente et que la tendance de fond (50 bougies) monte. Il vend au croisement inverse, au stop-loss ou à l'objectif. Les stop-loss sont vérifiés sur le plus bas atteint pendant chaque bougie, donc aucune chute n'est ratée entre deux passages.</p>
   </section>
 
@@ -183,7 +196,16 @@ const $=id=>document.getElementById(id);
 const nameOf=s=>PAIRS.find(p=>p.s===s)?.name||s;
 function setTone(el,v){el.classList.toggle('up',v>0);el.classList.toggle('down',v<0);}
 
-let S=null,stateErr=false;
+let S=null,stateErr=false,cur='A';
+try{const v=localStorage.getItem('bot-tab');if(v==='A'||v==='B') cur=v;}catch(e){}
+const MODE_KEYS=Object.keys(Engine.MODES);
+const COLORS={A:'--accent',B:'--warn'};
+function acc(){return S.accounts[cur]||S.accounts.A;}
+// Ancien format (un seul portefeuille) : on l'affiche comme le portefeuille A.
+function normalize(st){
+  if(st.accounts) return st;
+  return {...st,accounts:{A:{book:st.book,log:st.log,equity:st.equity,day:st.day,halted:st.halted,start:st.start,startPrices:st.startPrices}}};
+}
 const live={},lastShown={},change24={};
 let lastTick=0;
 
@@ -192,7 +214,7 @@ async function loadState(){
   try{
     const r=await fetch(STATE_URL+'?t='+Date.now(),{cache:'no-store'});
     if(!r.ok) throw new Error(r.status);
-    S=await r.json();stateErr=false;
+    S=normalize(await r.json());stateErr=false;
   }catch(e){stateErr=true;}
   render();
 }
@@ -230,30 +252,50 @@ function render(){
     if(stateErr){$('banner').hidden=false;$('banner').className='banner info';$('banner').textContent='Aucune donnée du bot pour l\'instant. Le premier passage a lieu dans les 5 à 15 minutes qui suivent la mise en ligne.';}
     renderMarkets();return;
   }
-  const px=prices(),eq=Engine.equityOf(S.book,px),tot=eq-RULES.startCash,day=eq-(S.day?.equity??RULES.startCash);
+  renderTabs();
+  const A=acc(),px=prices(),eq=Engine.equityOf(A.book,px),tot=eq-RULES.startCash,day=eq-(A.day?.equity??RULES.startCash);
   $('kEq').textContent=eur.format(eq);
   $('kTot').textContent=signed(tot);setTone($('kTot'),tot);
-  $('kTotS').textContent=pct(tot/RULES.startCash)+' depuis le '+new Date(S.start).toLocaleDateString('fr-FR');
+  $('kTotS').textContent=pct(tot/RULES.startCash)+' depuis le '+new Date(A.start).toLocaleDateString('fr-FR');
   $('kDay').textContent=signed(day);setTone($('kDay'),day);
-  const sells=S.book.trades.filter(t=>t.side==='vente'),wins=sells.filter(t=>t.pnl>0).length;
+  const sells=A.book.trades.filter(t=>t.side==='vente'),wins=sells.filter(t=>t.pnl>0).length;
   $('kTr').textContent=sells.length;
   $('kTrS').textContent=sells.length?`${wins} gagnant${wins>1?'s':''}, ${sells.length-wins} perdant${sells.length-wins>1?'s':''}`:'Aucun pour l\'instant';
-  if(S.startPrices){const r=PAIRS.reduce((a,p)=>a+(px[p.s]/S.startPrices[p.s]-1),0)/PAIRS.length;$('kBh').textContent=pct(r);setTone($('kBh'),r);}
+  if(A.startPrices){const r=PAIRS.reduce((a,p)=>a+(px[p.s]/A.startPrices[p.s]-1),0)/PAIRS.length;$('kBh').textContent=pct(r);setTone($('kBh'),r);}
 
   const age=Date.now()-S.lastRun,mins=Math.floor(age/60000);
   $('lastRun').textContent=`Dernier passage du bot : ${mins<1?'à l\'instant':'il y a '+mins+' min'} · prix ${S.source||''}`;
   let cls='ok',t='Bot actif';
-  if(S.halted==='total'){cls='bad';t='Coupe-circuit';}
-  else if(S.halted==='day'){cls='bad';t='Arrêté pour aujourd\'hui';}
+  if(A.halted==='total'){cls='bad';t='Coupe-circuit';}
+  else if(A.halted==='day'){cls='bad';t='Arrêté pour aujourd\'hui';}
   else if(age>30*60000){cls='bad';t='Bot en retard';}
   else if(age>12*60000){cls='wait';t='Bot actif (GitHub en retard)';}
   st.className='pill '+cls;txt.textContent=t;
   const b=$('banner');
-  if(S.halted==='total'){b.hidden=false;b.className='banner';b.textContent='Le coupe-circuit s\'est déclenché : le portefeuille a perdu 20 %. Tout a été vendu. Remets à zéro pour recommencer (voir « Piloter le bot » en bas de page).';}
-  else if(S.halted==='day'){b.hidden=false;b.className='banner';b.textContent='Perte du jour de 5 % atteinte. Tout a été vendu, le bot reprend automatiquement demain.';}
+  if(A.halted==='total'){b.hidden=false;b.className='banner';b.textContent='Le coupe-circuit s\'est déclenché : le portefeuille a perdu 20 %. Tout a été vendu. Remets à zéro pour recommencer (voir « Piloter le bot » en bas de page).';}
+  else if(A.halted==='day'){b.hidden=false;b.className='banner';b.textContent='Perte du jour de 5 % atteinte. Tout a été vendu, le bot reprend automatiquement demain.';}
   else if(age>30*60000){b.hidden=false;b.className='banner info';b.textContent='Le bot n\'a pas tourné depuis plus de 30 minutes. GitHub a parfois du retard. S\'il ne repart pas dans l\'heure, vérifie qu\'il n\'est pas en pause (voir « Piloter le bot »).';}
   else b.hidden=true;
   renderMarkets();renderJournal();drawChart();
+}
+function renderTabs(){
+  const box=$('tabs'),px=prices();
+  if(!box.children.length){
+    box.innerHTML=MODE_KEYS.map(m=>`<button type="button" class="tab" role="tab" id="tab-${m}" data-m="${m}">
+      <span class="tn"><span class="sw" style="background:var(${COLORS[m]})"></span>${Engine.MODES[m].name}</span>
+      <span class="tv" id="tabv-${m}">—</span><span class="td" id="tabd-${m}">&nbsp;</span></button>`).join('');
+    box.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{cur=b.dataset.m;try{localStorage.setItem('bot-tab',cur);}catch(e){}journalKey='';render();});
+  }
+  for(const m of MODE_KEYS){
+    const a=S.accounts[m],btn=$('tab-'+m);
+    btn.setAttribute('aria-selected',String(m===cur));
+    if(!a){btn.disabled=true;$('tabd-'+m).textContent='Démarre au prochain passage';continue;}
+    btn.disabled=false;
+    const eq=Engine.equityOf(a.book,px),v=$('tabv-'+m);
+    v.textContent=eur.format(eq);setTone(v,eq-RULES.startCash);
+    const streak=Engine.lossStreak(a.book),alloc=Engine.allocFor(a.book,m);
+    $('tabd-'+m).textContent=(a.halted==='total'?'Coupe-circuit · ':a.halted==='day'?'Arrêté aujourd\'hui · ':'')+`Prochaine mise : ${Math.round(alloc*100)} %`+(Engine.MODES[m].martingale&&streak?` (${streak} perte${streak>1?'s':''} d'affilée)`:'');
+  }
 }
 function renderMarkets(){
   const box=$('markets');
@@ -275,7 +317,7 @@ function renderMarkets(){
     if(!S) continue;
     const sig=Engine.signal(S.closes?.[p.s]||[]);
     $('sg-'+p.s).textContent=!sig?'Calcul…':sig.fastAbove?(sig.trendUp?'Haussier':'Hausse courte, tendance faible'):'Baissier, on attend';
-    const pos=S.book.positions[p.s],ps=$('ps-'+p.s);
+    const pos=acc().book.positions[p.s],ps=$('ps-'+p.s);
     if(pos){
       const pl=pos.qty*v-pos.cost;
       ps.className='pos';
@@ -288,8 +330,8 @@ function renderMarkets(){
 }
 let journalKey='';
 function renderJournal(){
-  const rows=[...S.book.trades,...S.log].sort((a,b)=>b.time-a.time).slice(0,100);
-  const key=rows.length+':'+(rows[0]?.time||0);
+  const A=acc(),rows=[...A.book.trades,...A.log].sort((a,b)=>b.time-a.time).slice(0,100);
+  const key=cur+':'+rows.length+':'+(rows[0]?.time||0);
   if(key===journalKey) return;journalKey=key;
   const tb=$('journal');
   if(!rows.some(r=>r.side!=='info')&&rows.length<=1){tb.innerHTML='<tr><td colspan="7" class="empty">Le bot observe le marché. Il n\'a encore pris aucune décision. Il faut parfois attendre plusieurs heures avant un signal.</td></tr>';return;}
@@ -304,23 +346,29 @@ function drawChart(){
   const cv=$('chart'),dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
   if(cv.width!==w*dpr||cv.height!==h*dpr){cv.width=w*dpr;cv.height=h*dpr;}
   const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
-  const pts=S.equity.slice();
-  pts.push({t:Date.now(),v:Engine.equityOf(S.book,prices())});
+  const px=prices(),series=MODE_KEYS.filter(m=>S.accounts[m]).map(m=>{const pts=S.accounts[m].equity.slice();pts.push({t:Date.now(),v:Engine.equityOf(S.accounts[m].book,px)});return {m,pts};});
+  $('legend').innerHTML=series.map(({m,pts})=>`<span><span class="sw" style="background:var(${COLORS[m]})"></span>${Engine.MODES[m].name} : <b class="num">${eur.format(pts.at(-1).v)}</b></span>`).join('');
   g.font='12px '+cssVar('--mono');
-  if(pts.length<2){g.fillStyle=cssVar('--muted');g.fillText('La courbe apparaît après quelques passages du bot.',8,h/2);return;}
-  let lo=Math.min(RULES.startCash,...pts.map(p=>p.v)),hi=Math.max(RULES.startCash,...pts.map(p=>p.v));
+  const all=series.flatMap(x=>x.pts);
+  if(all.length<3){g.fillStyle=cssVar('--muted');g.fillText('Les courbes apparaissent après quelques passages du bot.',8,h/2);return;}
+  const t0=Math.min(...all.map(p=>p.t)),t1=Math.max(...all.map(p=>p.t));
+  let lo=Math.min(RULES.startCash,...all.map(p=>p.v)),hi=Math.max(RULES.startCash,...all.map(p=>p.v));
   const pad=Math.max((hi-lo)*0.15,2);lo-=pad;hi+=pad;
   const L=8,R=w-78,T=10,B=h-22;
-  const x=t=>L+(t-pts[0].t)/(pts.at(-1).t-pts[0].t||1)*(R-L),y=v=>B-(v-lo)/(hi-lo)*(B-T);
+  const x=t=>L+(t-t0)/(t1-t0||1)*(R-L),y=v=>B-(v-lo)/(hi-lo)*(B-T);
   g.strokeStyle=cssVar('--line');g.lineWidth=1;
   for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,yy=y(v);g.beginPath();g.moveTo(L,yy);g.lineTo(R,yy);g.stroke();g.fillStyle=cssVar('--muted');g.fillText(eur.format(v),R+6,yy+4);}
   g.setLineDash([4,4]);g.strokeStyle=cssVar('--muted');g.beginPath();g.moveTo(L,y(RULES.startCash));g.lineTo(R,y(RULES.startCash));g.stroke();g.setLineDash([]);
-  const end=pts.at(-1).v,col=end>=RULES.startCash?cssVar('--up'):cssVar('--down');
-  g.beginPath();pts.forEach((p,i)=>i?g.lineTo(x(p.t),y(p.v)):g.moveTo(x(p.t),y(p.v)));
-  g.strokeStyle=col;g.lineWidth=2;g.stroke();
-  g.lineTo(x(pts.at(-1).t),B);g.lineTo(x(pts[0].t),B);g.closePath();g.globalAlpha=.12;g.fillStyle=col;g.fill();g.globalAlpha=1;
-  g.beginPath();g.arc(x(pts.at(-1).t),y(end),3.5,0,7);g.fillStyle=col;g.fill();
-  g.fillStyle=cssVar('--muted');g.fillText(timeFmt(pts[0].t),L,h-4);const lt=timeFmt(pts.at(-1).t);g.fillText(lt,R-g.measureText(lt).width,h-4);
+  // La courbe du portefeuille affiché est dessinée en dernier, au-dessus de l'autre.
+  for(const {m,pts} of series.sort((a,b)=>(a.m===cur)-(b.m===cur))){
+    const col=cssVar(COLORS[m]),sel=m===cur;
+    g.globalAlpha=sel?1:.55;
+    g.beginPath();pts.forEach((p,i)=>i?g.lineTo(x(p.t),y(p.v)):g.moveTo(x(p.t),y(p.v)));
+    g.strokeStyle=col;g.lineWidth=sel?2.5:1.5;g.stroke();
+    g.beginPath();g.arc(x(pts.at(-1).t),y(pts.at(-1).v),sel?3.5:2.5,0,7);g.fillStyle=col;g.fill();
+  }
+  g.globalAlpha=1;
+  g.fillStyle=cssVar('--muted');g.fillText(timeFmt(t0),L,h-4);const lt=timeFmt(t1);g.fillText(lt,R-g.measureText(lt).width,h-4);
 }
 
 /* ---------- Test sur le passé (prix Binance, même moteur que le bot) ---------- */
@@ -344,29 +392,43 @@ async function backtest(){
     await Promise.all(PAIRS.map(async p=>{data[p.s]=(await klines(p.s,4032)).filter(c=>c.T<Date.now());}));
     const times=[...new Set(Object.values(data).flat().map(c=>c.t))].sort((a,b)=>a-b);
     const idx={};for(const s in data) idx[s]=new Map(data[s].map(c=>[c.t,c]));
-    const book=Engine.newBook(RULES.startCash),closes={},px={},first={};
-    let peak=RULES.startCash,maxDD=0,n=0;
-    for(const t of times){
-      n++;
-      for(const p of PAIRS){
-        const c=idx[p.s].get(t);if(!c) continue;
-        Engine.checkExits(book,p.s,c,t+CANDLE_MS);
-        (closes[p.s]||(closes[p.s]=[])).push(c.c);px[p.s]=c.c;
-        if(n===60) first[p.s]=c.c;
-        if(n>=60) Engine.onCloseDecision(book,p.s,closes[p.s],px,t+CANDLE_MS);
+    // Même simulation que le bot, avec les mêmes règles de sécurité, pour chaque portefeuille.
+    const dd=v=>(v>0.0005?'−':'')+(v*100).toFixed(1).replace('.',',')+' %';
+    let bh=0,days='';
+    const res={};
+    for(const m of MODE_KEYS){
+      const book=Engine.newBook(RULES.startCash),closes={},px={},first={};
+      let peak=RULES.startCash,maxDD=0,n=0,halted=null,dayKey='',dayEq=RULES.startCash;
+      for(const t of times){
+        n++;
+        for(const p of PAIRS){
+          const c=idx[p.s].get(t);if(!c) continue;
+          if(halted!=='total') Engine.checkExits(book,p.s,c,t+CANDLE_MS);
+          (closes[p.s]||(closes[p.s]=[])).push(c.c);px[p.s]=c.c;
+          if(n===60) first[p.s]=c.c;
+          if(n>=60&&!halted) Engine.onCloseDecision(book,p.s,closes[p.s],px,t+CANDLE_MS,m);
+        }
+        let eq=Engine.equityOf(book,px);
+        const dk=new Date(t).toLocaleDateString('fr-CA',{timeZone:'Europe/Paris'});
+        if(dk!==dayKey){dayKey=dk;dayEq=eq;if(halted==='day') halted=null;}
+        const flat=r=>{for(const s of Object.keys(book.positions)) Engine.closePos(book,s,px[s],t,r);};
+        if(halted!=='total'&&eq<=RULES.startCash*(1-RULES.totalLoss)){flat('coupe-circuit');halted='total';}
+        else if(!halted&&eq<=dayEq*(1-RULES.dayLoss)){flat('arrêt du jour');halted='day';}
+        eq=Engine.equityOf(book,px);peak=Math.max(peak,eq);maxDD=Math.max(maxDD,1-eq/peak);
       }
-      const eq=Engine.equityOf(book,px);peak=Math.max(peak,eq);maxDD=Math.max(maxDD,1-eq/peak);
+      const sells=book.trades.filter(t=>t.side==='vente');
+      res[m]={r:Engine.equityOf(book,px)/RULES.startCash-1,maxDD,n:sells.length,wins:sells.filter(t=>t.pnl>0).length,halted};
+      bh=PAIRS.reduce((a,p)=>a+(px[p.s]/(first[p.s]||px[p.s])-1),0)/PAIRS.length;
+      days=((times.at(-1)-times[59])/86400000).toFixed(1).replace('.',',');
     }
-    const eq=Engine.equityOf(book,px),sells=book.trades.filter(t=>t.side==='vente'),wins=sells.filter(t=>t.pnl>0).length;
-    const bh=PAIRS.reduce((a,p)=>a+(px[p.s]/(first[p.s]||px[p.s])-1),0)/PAIRS.length;
-    const days=((times.at(-1)-times[59])/86400000).toFixed(1).replace('.',',');
-    const r=eq/RULES.startCash-1;
+    const {A,B}=res;
     out.hidden=false;
     out.innerHTML=[
-      ['Résultat du bot',pct(r),r],['Acheter et garder',pct(bh),bh],
-      ['Trades terminés',String(sells.length),0],['Trades gagnants',sells.length?Math.round(wins/sells.length*100)+' %':'—',0],
-      ['Pire baisse en cours de route',(maxDD>0.0005?'−':'')+(maxDD*100).toFixed(1).replace('.',',')+' %',0],['Période testée',days+' jours',0]
-    ].map(([l,v,tone])=>`<div class="kpi"><div class="l">${l}</div><div class="v num ${tone>0?'up':tone<0?'down':''}">${v}</div></div>`).join('');
+      ['Bot prudent',pct(A.r),A.r],['Bot rattrapage',pct(B.r),B.r],['Acheter et garder',pct(bh),bh],
+      ['Pire baisse · prudent',dd(A.maxDD),0],['Pire baisse · rattrapage',dd(B.maxDD),0],
+      ['Trades terminés',`${A.n} (${A.n?Math.round(A.wins/A.n*100):0} % gagnants)`,0],
+      ['Période testée',days+' jours',0]
+    ].concat(B.halted==='total'?[['Coupe-circuit','Déclenché sur le rattrapage',-1]]:[]).map(([l,v,tone])=>`<div class="kpi"><div class="l">${l}</div><div class="v num ${tone>0?'up':tone<0?'down':''}">${v}</div></div>`).join('');
   }catch(e){
     out.hidden=false;out.innerHTML='<div class="banner">Impossible de télécharger les prix. Vérifie ta connexion internet puis relance le test.</div>';
   }

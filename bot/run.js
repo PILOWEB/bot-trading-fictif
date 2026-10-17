@@ -1,10 +1,10 @@
 // Un passage du bot : récupère les vrais prix, rejoue les bougies de 5 min terminées
-// depuis le dernier passage, prend les décisions et enregistre l'état.
+// depuis le dernier passage, prend les décisions pour chaque portefeuille et enregistre l'état.
 // Lancé toutes les 5 minutes par GitHub Actions (.github/workflows/bot.yml).
 const fs = require('fs');
 const path = require('path');
 const E = require('./engine');
-const { PAIRS, RULES, CANDLE_MS } = E;
+const { PAIRS, RULES, CANDLE_MS, MODES } = E;
 
 const FILE = process.env.STATE_FILE || path.join(__dirname, '..', 'state', 'state.json');
 const NOW = process.env.NOW ? Number(process.env.NOW) : Date.now();
@@ -39,55 +39,71 @@ async function candles(p) {
   }
 }
 
+function freshAccount(msg) {
+  const acc = { start: NOW, book: E.newBook(RULES.startCash), log: [], equity: [], day: null, halted: null, startPrices: null };
+  if (msg) acc.log.push({ side: 'info', time: NOW, reason: msg });
+  return acc;
+}
+
 function fresh() {
-  return {
-    version: 1, start: NOW, book: E.newBook(RULES.startCash), log: [], equity: [],
-    day: null, halted: null, startPrices: null, lastCandle: {}, closes: {}, prices: {}, lastRun: null, source: null,
-  };
+  return { version: 2, accounts: {}, lastCandle: {}, closes: {}, prices: {}, lastRun: null, source: null };
 }
 
 function load() {
   try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (e) { return null; }
 }
 
-function info(S, time, msg) { S.log.push({ side: 'info', time, reason: msg }); console.log(msg); }
+// Version 1 : un seul portefeuille à la racine de l'état. Il devient le portefeuille A.
+function migrate(S) {
+  if (S.accounts) return S;
+  const { book, log, equity, day, halted, start, startPrices } = S;
+  return {
+    version: 2, accounts: { A: { start, book, log, equity, day, halted, startPrices } },
+    lastCandle: S.lastCandle, closes: S.closes, prices: S.prices, lastRun: S.lastRun, source: S.source,
+  };
+}
 
-function closeAll(S, prices, time, reason) {
-  for (const s of Object.keys(S.book.positions)) E.closePos(S.book, s, prices[s] ?? S.book.positions[s].entry, time, reason);
+function info(acc, time, msg) { acc.log.push({ side: 'info', time, reason: msg }); }
+
+function closeAll(acc, prices, time, reason) {
+  for (const s of Object.keys(acc.book.positions)) E.closePos(acc.book, s, prices[s] ?? acc.book.positions[s].entry, time, reason);
 }
 
 // Arrêt du jour à -5 % et coupe-circuit à -20 %.
-function riskCheck(S, prices, time) {
-  const eq = E.equityOf(S.book, prices);
+function riskCheck(acc, prices, time) {
+  const eq = E.equityOf(acc.book, prices);
   const day = parisDay(time);
-  if (!S.day || S.day.date !== day) {
-    S.day = { date: day, equity: eq };
-    if (S.halted === 'day') { S.halted = null; info(S, time, 'Nouvelle journée : le bot reprend.'); }
+  if (!acc.day || acc.day.date !== day) {
+    acc.day = { date: day, equity: eq };
+    if (acc.halted === 'day') { acc.halted = null; info(acc, time, 'Nouvelle journée : le bot reprend.'); }
   }
-  if (S.halted === 'total') return eq;
+  if (acc.halted === 'total') return eq;
   if (eq <= RULES.startCash * (1 - RULES.totalLoss)) {
-    closeAll(S, prices, time, 'Coupe-circuit : perte totale de 20 % atteinte');
-    S.halted = 'total';
-    info(S, time, 'Coupe-circuit déclenché. Le bot est arrêté définitivement.');
-  } else if (!S.halted && eq <= S.day.equity * (1 - RULES.dayLoss)) {
-    closeAll(S, prices, time, 'Arrêt du jour : perte de 5 % sur la journée');
-    S.halted = 'day';
-    info(S, time, 'Perte du jour à −5 % : le bot attend demain.');
+    closeAll(acc, prices, time, 'Coupe-circuit : perte totale de 20 % atteinte');
+    acc.halted = 'total';
+    info(acc, time, 'Coupe-circuit déclenché. Le bot est arrêté définitivement.');
+  } else if (!acc.halted && eq <= acc.day.equity * (1 - RULES.dayLoss)) {
+    closeAll(acc, prices, time, 'Arrêt du jour : perte de 5 % sur la journée');
+    acc.halted = 'day';
+    info(acc, time, 'Perte du jour à −5 % : le bot attend demain.');
   }
-  return E.equityOf(S.book, prices);
+  return E.equityOf(acc.book, prices);
 }
 
-function pushEquity(S, t, v) {
-  const last = S.equity[S.equity.length - 1];
-  if (last && last.t === t) last.v = v; else S.equity.push({ t, v });
+function pushEquity(acc, t, v) {
+  const last = acc.equity[acc.equity.length - 1];
+  if (last && last.t === t) last.v = v; else acc.equity.push({ t, v });
 }
 
 async function main() {
   let S = load();
-  if (!S || RESET) {
-    S = fresh();
-    info(S, NOW, RESET ? 'Portefeuille remis à zéro : 1 000 € fictifs.' : 'Démarrage du bot avec 1 000 € fictifs.');
+  if (!S || RESET) S = fresh();
+  else S = migrate(S);
+  for (const m of Object.keys(MODES)) {
+    if (!S.accounts[m] || RESET)
+      S.accounts[m] = freshAccount(RESET ? 'Portefeuille remis à zéro : 1 000 € fictifs.' : `Démarrage du ${MODES[m].name.toLowerCase()} avec 1 000 € fictifs.`);
   }
+  const accounts = Object.entries(S.accounts);
 
   const data = {};
   for (const p of PAIRS) data[p.s] = await candles(p);
@@ -100,7 +116,7 @@ async function main() {
     const rows = data[p.s].rows;
     live[p.s] = rows[rows.length - 1].c;
     const closed = rows.filter(c => c.t + CANDLE_MS <= NOW);
-    if (!S.closes[p.s]) {
+    if (!S.closes[p.s] || RESET) {
       // Premier passage : on charge l'historique sans trader dessus.
       S.closes[p.s] = closed.slice(-MAX_CLOSES).map(c => c.c);
       S.lastCandle[p.s] = closed[closed.length - 1].t;
@@ -117,30 +133,34 @@ async function main() {
     for (; i < events.length && events[i].c.t === t; i++) {
       const { s, c } = events[i];
       S.prices[s] = c.c;
-      if (S.halted !== 'total') E.checkExits(S.book, s, c, closeTime);
       const closes = S.closes[s];
       closes.push(c.c);
       if (closes.length > MAX_CLOSES) closes.splice(0, closes.length - MAX_CLOSES);
       S.lastCandle[s] = t;
-      if (!S.halted) E.onCloseDecision(S.book, s, closes, S.prices, closeTime);
+      for (const [m, acc] of accounts) {
+        if (acc.halted !== 'total') E.checkExits(acc.book, s, c, closeTime);
+        if (!acc.halted) E.onCloseDecision(acc.book, s, closes, S.prices, closeTime, m);
+      }
     }
-    pushEquity(S, closeTime, riskCheck(S, S.prices, closeTime));
+    for (const [, acc] of accounts) pushEquity(acc, closeTime, riskCheck(acc, S.prices, closeTime));
   }
 
   // Prix du moment, pour l'affichage et le point de départ « acheter et garder ».
   Object.assign(S.prices, live);
-  if (!S.startPrices) S.startPrices = { ...live };
-  pushEquity(S, NOW, riskCheck(S, S.prices, NOW));
+  for (const [m, acc] of accounts) {
+    if (!acc.startPrices) acc.startPrices = { ...live };
+    pushEquity(acc, NOW, riskCheck(acc, S.prices, NOW));
+    if (acc.book.trades.length > MAX_TRADES) acc.book.trades.splice(0, acc.book.trades.length - MAX_TRADES);
+    if (acc.log.length > MAX_LOG) acc.log.splice(0, acc.log.length - MAX_LOG);
+    if (acc.equity.length > MAX_EQUITY) acc.equity.splice(0, acc.equity.length - MAX_EQUITY);
+    const eq = E.equityOf(acc.book, S.prices);
+    console.log(`${MODES[m].name} : ${eq.toFixed(2)} €. Positions : ${Object.keys(acc.book.positions).join(', ') || 'aucune'}.`);
+  }
   S.lastRun = NOW;
-
-  if (S.book.trades.length > MAX_TRADES) S.book.trades.splice(0, S.book.trades.length - MAX_TRADES);
-  if (S.log.length > MAX_LOG) S.log.splice(0, S.log.length - MAX_LOG);
-  if (S.equity.length > MAX_EQUITY) S.equity.splice(0, S.equity.length - MAX_EQUITY);
 
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
   fs.writeFileSync(FILE, JSON.stringify(S));
-  const eq = E.equityOf(S.book, S.prices);
-  console.log(`${events.length} bougie(s) traitée(s). Portefeuille : ${eq.toFixed(2)} €. Positions : ${Object.keys(S.book.positions).join(', ') || 'aucune'}.`);
+  console.log(`${events.length} bougie(s) traitée(s).`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

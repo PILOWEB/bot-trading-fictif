@@ -52,9 +52,9 @@
     return v;
   }
 
-  function openPos(book, s, price, time, reason, eq) {
+  function openPos(book, s, price, time, reason, eq, allocPct = RULES.alloc) {
     if (book.positions[s]) return null;
-    const alloc = Math.min(eq * RULES.alloc, book.cash);
+    const alloc = Math.min(eq * allocPct, book.cash);
     if (alloc < RULES.minOrder) return null;
     const fill = price * (1 + RULES.slip), fee = alloc * RULES.fee, qty = (alloc - fee) / fill;
     book.cash -= alloc;
@@ -85,16 +85,42 @@
     return null;
   }
 
+  // Les deux portefeuilles : A garde des mises fixes, B double sa mise après chaque perte (martingale).
+  const MODES = {
+    A: { name: 'Bot prudent', short: 'Prudent', martingale: false },
+    B: { name: 'Bot rattrapage', short: 'Rattrapage', martingale: true },
+  };
+
+  // Nombre de ventes perdantes d'affilée, en partant de la plus récente.
+  function lossStreak(book) {
+    let n = 0;
+    for (let i = book.trades.length - 1; i >= 0; i--) {
+      const t = book.trades[i];
+      if (t.side !== 'vente') continue;
+      if (t.pnl < 0) n++; else break;
+    }
+    return n;
+  }
+
+  // Part du portefeuille misée sur le prochain achat. B : 25 %, puis 50 %, puis 100 % (jamais plus : pas de levier).
+  function allocFor(book, mode) {
+    if (!MODES[mode] || !MODES[mode].martingale) return RULES.alloc;
+    return Math.min(1, RULES.alloc * 2 ** lossStreak(book));
+  }
+
   // Décision à la clôture d'une bougie de 5 minutes.
-  function onCloseDecision(book, s, closes, prices, time) {
+  function onCloseDecision(book, s, closes, prices, time, mode = 'A') {
     const sig = signal(closes);
     if (!sig) return null;
     if (book.positions[s] && sig.down)
       return closePos(book, s, closes[closes.length - 1], time, 'La moyenne rapide repasse sous la lente : la hausse s\'essouffle');
-    if (!book.positions[s] && sig.up && sig.trendUp)
-      return openPos(book, s, closes[closes.length - 1], time, 'La moyenne rapide passe au-dessus de la lente, tendance de fond haussière', equityOf(book, prices));
+    if (!book.positions[s] && sig.up && sig.trendUp) {
+      const pct = allocFor(book, mode);
+      const note = pct > RULES.alloc ? ` · mise ×${Math.round(pct / RULES.alloc)} pour se refaire` : '';
+      return openPos(book, s, closes[closes.length - 1], time, 'La moyenne rapide passe au-dessus de la lente, tendance de fond haussière' + note, equityOf(book, prices), pct);
+    }
     return null;
   }
 
-  return { PAIRS, RULES, CANDLE_MS, ema, signal, newBook, equityOf, openPos, closePos, checkExits, onCloseDecision };
+  return { PAIRS, RULES, CANDLE_MS, MODES, lossStreak, allocFor, ema, signal, newBook, equityOf, openPos, closePos, checkExits, onCloseDecision };
 });
