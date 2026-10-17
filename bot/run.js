@@ -19,25 +19,31 @@ async function getJSON(url) {
   return r.json();
 }
 
-async function krakenCandles(p) {
-  const j = await getJSON(`https://api.kraken.com/0/public/OHLC?pair=${p.kraken}&interval=5`);
+async function krakenCandles(p, tf) {
+  const j = await getJSON(`https://api.kraken.com/0/public/OHLC?pair=${p.kraken}&interval=${tf}`);
   if (j.error && j.error.length) throw new Error(j.error.join(', '));
   const key = Object.keys(j.result).find(k => k !== 'last');
   return j.result[key].map(r => ({ t: r[0] * 1000, o: +r[1], h: +r[2], l: +r[3], c: +r[4] }));
 }
 
-async function coinbaseCandles(p) {
-  const rows = await getJSON(`https://api.exchange.coinbase.com/products/${p.coinbase}/candles?granularity=300`);
+async function coinbaseCandles(p, tf) {
+  const rows = await getJSON(`https://api.exchange.coinbase.com/products/${p.coinbase}/candles?granularity=${tf * 60}`);
   return rows.map(r => ({ t: r[0] * 1000, l: +r[1], h: +r[2], o: +r[3], c: +r[4] })).sort((a, b) => a.t - b.t);
 }
 
-async function candles(p) {
-  try { return { src: 'Kraken', rows: await krakenCandles(p) }; }
+async function candles(p, tf) {
+  try { return { src: 'Kraken', rows: await krakenCandles(p, tf) }; }
   catch (e) {
     console.log(`Kraken indisponible pour ${p.s} (${e.message}), on passe sur Coinbase.`);
-    return { src: 'Coinbase', rows: await coinbaseCandles(p) };
+    return { src: 'Coinbase', rows: await coinbaseCandles(p, tf) };
   }
 }
+
+// Unités de temps suivies : chaque portefeuille décide sur celle de son mode.
+const TIMEFRAMES = [
+  { min: 5, closesKey: 'closes', lastKey: 'lastCandle' },
+  { min: 1, closesKey: 'closes1', lastKey: 'lastCandle1' },
+];
 
 function freshAccount(msg) {
   const acc = { start: NOW, book: E.newBook(RULES.startCash), log: [], equity: [], day: null, halted: null, startPrices: null };
@@ -90,9 +96,11 @@ function riskCheck(acc, prices, time) {
   return E.equityOf(acc.book, prices);
 }
 
-function pushEquity(acc, t, v) {
+// Un point toutes les 5 minutes, plus un point provisoire « maintenant » remplacé au passage suivant.
+function pushEquity(acc, t, v, provisional) {
   const last = acc.equity[acc.equity.length - 1];
-  if (last && last.t === t) last.v = v; else acc.equity.push({ t, v });
+  if (last && (last.p || last.t === t)) acc.equity.pop();
+  acc.equity.push(provisional ? { t, v, p: 1 } : { t, v });
 }
 
 async function main() {
@@ -105,51 +113,66 @@ async function main() {
   }
   const accounts = Object.entries(S.accounts);
 
-  const data = {};
-  for (const p of PAIRS) data[p.s] = await candles(p);
-  S.source = [...new Set(Object.values(data).map(d => d.src))].join(' + ');
-
-  // Bougies terminées seulement ; la dernière ligne est la bougie en cours.
-  const events = [];
+  const sources = new Set();
   const live = {};
-  for (const p of PAIRS) {
-    const rows = data[p.s].rows;
-    live[p.s] = rows[rows.length - 1].c;
-    const closed = rows.filter(c => c.t + CANDLE_MS <= NOW);
-    if (!S.closes[p.s] || RESET) {
-      // Premier passage : on charge l'historique sans trader dessus.
-      S.closes[p.s] = closed.slice(-MAX_CLOSES).map(c => c.c);
-      S.lastCandle[p.s] = closed[closed.length - 1].t;
-      S.prices[p.s] = closed[closed.length - 1].c;
-      continue;
-    }
-    for (const c of closed) if (c.t > S.lastCandle[p.s]) events.push({ s: p.s, c });
-  }
-  events.sort((a, b) => a.c.t - b.c.t);
+  let processed = 0;
+  for (const tf of TIMEFRAMES) {
+    const ms = tf.min * 60 * 1000;
+    const accs = accounts.filter(([m]) => MODES[m].tf === tf.min);
+    if (!accs.length) continue;
+    S[tf.closesKey] = S[tf.closesKey] || {};
+    S[tf.lastKey] = S[tf.lastKey] || {};
+    const closesBy = S[tf.closesKey], lastBy = S[tf.lastKey];
 
-  let i = 0;
-  while (i < events.length) {
-    const t = events[i].c.t, closeTime = t + CANDLE_MS;
-    for (; i < events.length && events[i].c.t === t; i++) {
-      const { s, c } = events[i];
-      S.prices[s] = c.c;
-      const closes = S.closes[s];
-      closes.push(c.c);
-      if (closes.length > MAX_CLOSES) closes.splice(0, closes.length - MAX_CLOSES);
-      S.lastCandle[s] = t;
-      for (const [m, acc] of accounts) {
-        if (acc.halted !== 'total') E.checkExits(acc.book, s, c, closeTime);
-        if (!acc.halted) E.onCloseDecision(acc.book, s, closes, S.prices, closeTime, m);
+    // Bougies terminées seulement ; la dernière ligne est la bougie en cours.
+    const events = [];
+    for (const p of PAIRS) {
+      const { src, rows } = await candles(p, tf.min);
+      sources.add(src);
+      if (tf.min === 1 || live[p.s] == null) live[p.s] = rows[rows.length - 1].c;
+      const closed = rows.filter(c => c.t + ms <= NOW);
+      if (!closesBy[p.s] || RESET) {
+        // Premier passage : on charge l'historique sans trader dessus.
+        closesBy[p.s] = closed.slice(-MAX_CLOSES).map(c => c.c);
+        lastBy[p.s] = closed[closed.length - 1].t;
+        if (S.prices[p.s] == null) S.prices[p.s] = closed[closed.length - 1].c;
+        continue;
+      }
+      for (const c of closed) if (c.t > lastBy[p.s]) events.push({ s: p.s, c });
+    }
+    events.sort((a, b) => a.c.t - b.c.t);
+    processed += events.length;
+
+    const px = { ...S.prices };
+    let i = 0;
+    while (i < events.length) {
+      const t = events[i].c.t, closeTime = t + ms;
+      for (; i < events.length && events[i].c.t === t; i++) {
+        const { s, c } = events[i];
+        px[s] = c.c;
+        const closes = closesBy[s];
+        closes.push(c.c);
+        if (closes.length > MAX_CLOSES) closes.splice(0, closes.length - MAX_CLOSES);
+        lastBy[s] = t;
+        for (const [m, acc] of accs) {
+          if (acc.halted !== 'total') E.checkExits(acc.book, s, c, closeTime);
+          if (!acc.halted) E.onCloseDecision(acc.book, s, closes, px, closeTime, m);
+        }
+      }
+      for (const [, acc] of accs) {
+        const eq = riskCheck(acc, px, closeTime);
+        if (closeTime % CANDLE_MS === 0) pushEquity(acc, closeTime, eq);
       }
     }
-    for (const [, acc] of accounts) pushEquity(acc, closeTime, riskCheck(acc, S.prices, closeTime));
+    if (tf.min === 5) Object.assign(S.prices, px);
   }
+  S.source = [...sources].join(' + ');
 
   // Prix du moment, pour l'affichage et le point de départ « acheter et garder ».
   Object.assign(S.prices, live);
   for (const [m, acc] of accounts) {
     if (!acc.startPrices) acc.startPrices = { ...live };
-    pushEquity(acc, NOW, riskCheck(acc, S.prices, NOW));
+    pushEquity(acc, NOW, riskCheck(acc, S.prices, NOW), true);
     if (acc.book.trades.length > MAX_TRADES) acc.book.trades.splice(0, acc.book.trades.length - MAX_TRADES);
     if (acc.log.length > MAX_LOG) acc.log.splice(0, acc.log.length - MAX_LOG);
     if (acc.equity.length > MAX_EQUITY) acc.equity.splice(0, acc.equity.length - MAX_EQUITY);
@@ -160,7 +183,7 @@ async function main() {
 
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
   fs.writeFileSync(FILE, JSON.stringify(S));
-  console.log(`${events.length} bougie(s) traitée(s).`);
+  console.log(`${processed} bougie(s) traitée(s).`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

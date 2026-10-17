@@ -85,10 +85,13 @@
     return null;
   }
 
-  // Les deux portefeuilles : A garde des mises fixes, B double sa mise après chaque perte (martingale).
+  // Les portefeuilles : A garde des mises fixes, B double sa mise après chaque perte (martingale),
+  // C applique la stratégie de A sur des bougies d'1 minute (beaucoup plus de trades, pour voir la mécanique).
+  // tf : unité de temps des bougies, en minutes.
   const MODES = {
-    A: { name: 'Bot prudent', short: 'Prudent', martingale: false },
-    B: { name: 'Bot rattrapage', short: 'Rattrapage', martingale: true },
+    A: { name: 'Bot prudent', short: 'Prudent', martingale: false, tf: 5 },
+    B: { name: 'Bot rattrapage', short: 'Rattrapage', martingale: true, tf: 5 },
+    C: { name: 'Démo rapide', short: 'Démo 1 min', martingale: false, tf: 1 },
   };
 
   // Nombre de ventes perdantes d'affilée, en partant de la plus récente.

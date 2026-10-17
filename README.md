@@ -7,6 +7,7 @@ Deux portefeuilles fictifs tournent en parallèle sur les mêmes signaux et les 
 - **Bot prudent (A)** : mise fixe de 25 % du portefeuille par achat.
 - **Bot rattrapage (B)** : double sa mise après chaque perte (25 %, 50 %, puis 100 %, jamais plus), revient à 25 % après un gain.
   C'est une martingale, ajoutée pour comparer les deux approches avec de vrais prix.
+- **Démo rapide (C)** : mêmes règles que le bot prudent, mais sur des bougies d'1 minute. Beaucoup plus de trades, pour voir la mécanique tourner.
 
 - **Le bot** (`bot/run.js`) tourne sur GitHub Actions toutes les 5 minutes (`.github/workflows/bot.yml`).
   Il rejoue les bougies de 5 minutes terminées depuis son dernier passage, applique la stratégie et les règles de sécurité,

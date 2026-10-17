@@ -11,7 +11,7 @@
 :root{
   --bg:#f5f7f9; --panel:#ffffff; --fg:#14202b; --muted:#5b6b7a; --line:#dde3ea;
   --accent:#1f5fbf; --up:#12805c; --down:#c23b33; --warn:#a86400;
-  --up-bg:#e3f4ec; --down-bg:#fbe8e6; --warn-bg:#fdf1dc; --accent-bg:#e5eefb;
+  --up-bg:#e3f4ec; --down-bg:#fbe8e6; --warn-bg:#fdf1dc; --accent-bg:#e5eefb; --demo:#7a4fc9;
   --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   color-scheme:light;
@@ -19,7 +19,7 @@
 @media (prefers-color-scheme:dark){:root{
   --bg:#0f1418; --panel:#171e24; --fg:#e4eaf0; --muted:#8b9aa8; --line:#26313b;
   --accent:#6ea2ef; --up:#3ccf95; --down:#f07b72; --warn:#e8b04f;
-  --up-bg:#123326; --down-bg:#3a1b19; --warn-bg:#3a2c12; --accent-bg:#172a45;
+  --up-bg:#123326; --down-bg:#3a1b19; --warn-bg:#3a2c12; --accent-bg:#172a45; --demo:#b496f2;
   color-scheme:dark;
 }}
 *{box-sizing:border-box}
@@ -85,7 +85,7 @@ button:disabled{opacity:.5;cursor:default}
 .btres{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .note{font-size:13px;color:var(--muted);max-width:70ch}
 #tv{height:440px}
-.tabs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 .tab{text-align:left;padding:12px 14px;border-radius:8px;display:grid;gap:2px;min-width:0}
 .tab .tn{font-size:13px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:8px}
 .tab .tv{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:20px;font-weight:600}
@@ -125,7 +125,7 @@ button:disabled{opacity:.5;cursor:default}
   </section>
 
   <section class="panel">
-    <h2>Évolution des deux portefeuilles</h2>
+    <h2>Évolution des portefeuilles</h2>
     <div class="legend" id="legend"></div>
     <canvas id="chart" aria-label="Courbe de la valeur du portefeuille"></canvas>
   </section>
@@ -160,13 +160,13 @@ button:disabled{opacity:.5;cursor:default}
       <li><b>Coupe-circuit à −20 %</b><span>Tout est vendu et le bot s'arrête définitivement.</span></li>
       <li><b>Frais simulés</b><span>0,1 % par ordre + 0,05 % de glissement, comme sur un vrai compte.</span></li>
     </ul>
-    <p class="note" style="margin-top:14px"><b>Les deux portefeuilles :</b> ils suivent exactement les mêmes signaux et les mêmes règles de sécurité. Seule la mise change. Le <b>bot prudent</b> mise toujours 25 %. Le <b>bot rattrapage</b> double sa mise après chaque perte pour se refaire (25 %, puis 50 %, puis 100 % du portefeuille) et revient à 25 % dès qu'il gagne. C'est le principe de la martingale.</p>
+    <p class="note" style="margin-top:14px"><b>Les deux portefeuilles :</b> ils suivent exactement les mêmes signaux et les mêmes règles de sécurité. Seule la mise change. Le <b>bot prudent</b> mise toujours 25 %. Le <b>bot rattrapage</b> double sa mise après chaque perte pour se refaire (25 %, puis 50 %, puis 100 % du portefeuille) et revient à 25 % dès qu'il gagne. C'est le principe de la martingale. La <b>démo rapide</b> applique les règles du bot prudent sur des bougies d'1 minute au lieu de 5 : elle fait beaucoup plus de trades, et donc paie beaucoup plus de frais. Elle sert à voir la mécanique tourner, pas à gagner.</p>
     <p class="note" style="margin-top:14px"><b>La stratégie :</b> toutes les 5 minutes, le bot compare la moyenne des prix récents (9 bougies) à une moyenne plus lente (21 bougies). Il achète quand la rapide passe au-dessus de la lente et que la tendance de fond (50 bougies) monte. Il vend au croisement inverse, au stop-loss ou à l'objectif. Les stop-loss sont vérifiés sur le plus bas atteint pendant chaque bougie, donc aucune chute n'est ratée entre deux passages.</p>
   </section>
 
   <section class="panel" style="display:grid;gap:10px">
     <h2>Test sur le passé</h2>
-    <p class="note">Rejoue la même stratégie sur les 14 derniers jours de vrais prix, pour voir ce qu'elle aurait donné. Un bon résultat passé ne garantit rien pour la suite.</p>
+    <p class="note">Rejoue la stratégie du bot prudent et du bot rattrapage sur les 14 derniers jours de vrais prix, pour voir ce qu'elle aurait donné. Un bon résultat passé ne garantit rien pour la suite.</p>
     <div><button id="btnBt" type="button" class="primary">Lancer le test sur 14 jours</button></div>
     <div id="btOut" class="btres" hidden></div>
   </section>
@@ -184,7 +184,7 @@ button:disabled{opacity:.5;cursor:default}
 window.addEventListener('error',()=>{const b=document.getElementById('banner');if(!b) return;b.hidden=false;b.className='banner';b.textContent='La page n\'a pas pu se charger correctement. Rafraîchis-la (tire vers le bas sur téléphone). Si le problème continue, préviens Claude.';});
 </script>
 <!-- Le numéro de version force le navigateur à recharger le moteur après chaque mise à jour. -->
-<script src="bot/engine.js?v=2"></script>
+<script src="bot/engine.js?v=3"></script>
 <script>
 const {PAIRS,RULES,CANDLE_MS}=Engine;
 const OWNER=location.hostname.endsWith('.github.io')?location.hostname.split('.')[0]:'PILOWEB';
@@ -204,7 +204,8 @@ function setTone(el,v){el.classList.toggle('up',v>0);el.classList.toggle('down',
 let S=null,stateErr=false,cur='A';
 try{const v=localStorage.getItem('bot-tab');if(v==='A'||v==='B') cur=v;}catch(e){}
 const MODE_KEYS=Object.keys(Engine.MODES);
-const COLORS={A:'--accent',B:'--warn'};
+const COLORS={A:'--accent',B:'--warn',C:'--demo'};
+const closesFor=m=>(Engine.MODES[m]?.tf===1?S.closes1:S.closes)||{};
 function acc(){return S.accounts[cur]||S.accounts.A;}
 // Ancien format (un seul portefeuille) : on l'affiche comme le portefeuille A.
 function normalize(st){
@@ -320,7 +321,7 @@ function renderMarkets(){
     lastShown[p.s]=v;
     if(change24[p.s]!=null){const ch=$('ch-'+p.s);ch.textContent=pct(change24[p.s])+' sur 24 h';setTone(ch,change24[p.s]);}
     if(!S) continue;
-    const sig=Engine.signal(S.closes?.[p.s]||[]);
+    const sig=Engine.signal(closesFor(cur)[p.s]||[]);
     $('sg-'+p.s).textContent=!sig?'Calcul…':sig.fastAbove?(sig.trendUp?'Haussier':'Hausse courte, tendance faible'):'Baissier, on attend';
     const pos=acc().book.positions[p.s],ps=$('ps-'+p.s);
     if(pos){
@@ -401,7 +402,7 @@ async function backtest(){
     const dd=v=>(v>0.0005?'−':'')+(v*100).toFixed(1).replace('.',',')+' %';
     let bh=0,days='';
     const res={};
-    for(const m of MODE_KEYS){
+    for(const m of MODE_KEYS.filter(k=>Engine.MODES[k].tf===5)){
       const book=Engine.newBook(RULES.startCash),closes={},px={},first={};
       let peak=RULES.startCash,maxDD=0,n=0,halted=null,dayKey='',dayEq=RULES.startCash;
       for(const t of times){
