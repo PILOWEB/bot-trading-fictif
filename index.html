@@ -179,7 +179,12 @@ button:disabled{opacity:.5;cursor:default}
   </section>
 </div>
 
-<script src="bot/engine.js"></script>
+<script>
+// Si un script plante, on le dit au lieu de rester bloqué sur « Chargement… ».
+window.addEventListener('error',()=>{const b=document.getElementById('banner');if(!b) return;b.hidden=false;b.className='banner';b.textContent='La page n\'a pas pu se charger correctement. Rafraîchis-la (tire vers le bas sur téléphone). Si le problème continue, préviens Claude.';});
+</script>
+<!-- Le numéro de version force le navigateur à recharger le moteur après chaque mise à jour. -->
+<script src="bot/engine.js?v=2"></script>
 <script>
 const {PAIRS,RULES,CANDLE_MS}=Engine;
 const OWNER=location.hostname.endsWith('.github.io')?location.hostname.split('.')[0]:'PILOWEB';
