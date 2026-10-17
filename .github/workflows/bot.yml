@@ -1,0 +1,51 @@
+name: Bot de trading fictif
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: 'Remettre le portefeuille à 1 000 € fictifs'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# Un seul passage à la fois, pour ne jamais écraser l'état.
+concurrency:
+  group: bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Récupérer l'état du portefeuille
+        run: |
+          mkdir -p state
+          if git ls-remote --exit-code origin data >/dev/null 2>&1; then
+            git fetch --depth 1 origin data
+            git show FETCH_HEAD:state.json > state/state.json
+          fi
+
+      - name: Lancer le bot
+        run: node bot/run.js
+        env:
+          STATE_FILE: state/state.json
+          RESET: ${{ inputs.reset }}
+
+      # L'état est gardé sur la branche « data », en un seul commit écrasé à chaque passage.
+      - name: Enregistrer l'état
+        run: |
+          cd state
+          git init -q -b data
+          git config user.name "bot-trading-fictif"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -qm "État du portefeuille $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data

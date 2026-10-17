@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bot d'entraînement crypto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout : bandeau d'état, chiffres clés, courbe du portefeuille, cartes marché, journal. */
+:root{
+  --bg:#f5f7f9; --panel:#ffffff; --fg:#14202b; --muted:#5b6b7a; --line:#dde3ea;
+  --accent:#1f5fbf; --up:#12805c; --down:#c23b33; --warn:#a86400;
+  --up-bg:#e3f4ec; --down-bg:#fbe8e6; --warn-bg:#fdf1dc; --accent-bg:#e5eefb;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1418; --panel:#171e24; --fg:#e4eaf0; --muted:#8b9aa8; --line:#26313b;
+  --accent:#6ea2ef; --up:#3ccf95; --down:#f07b72; --warn:#e8b04f;
+  --up-bg:#123326; --down-bg:#3a1b19; --warn-bg:#3a2c12; --accent-bg:#172a45;
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+.wrap{max-width:1080px;margin:0 auto;padding-block:20px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:20px}
+h1{font-size:22px;margin:0;font-weight:600;text-wrap:balance}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
+a{color:var(--accent)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.tags{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;letter-spacing:.03em}
+.pill.fake{background:var(--warn-bg);color:var(--warn)}
+.pill.real{background:var(--accent-bg);color:var(--accent)}
+.pill.ok{background:var(--up-bg);color:var(--up)}
+.pill.bad{background:var(--down-bg);color:var(--down)}
+.pill.wait{background:var(--warn-bg);color:var(--warn)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.ok .dot{animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.ok .dot{animation:none}}
+.banner{padding:12px 14px;border-radius:8px;background:var(--down-bg);color:var(--down);font-weight:500}
+.banner.info{background:var(--warn-bg);color:var(--warn)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi .v{font-size:22px;font-weight:600;margin-top:2px}
+.kpi .s{font-size:12px;color:var(--muted)}
+.up{color:var(--up)} .down{color:var(--down)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+canvas{width:100%;height:220px;display:block}
+.markets{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.mk{display:grid;gap:6px}
+.mk .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.mk .name{font-weight:600}
+.mk .price{font-size:24px;font-weight:600}
+.mk .row{display:flex;justify-content:space-between;font-size:13px;gap:8px}
+.mk .row span:first-child{color:var(--muted)}
+.mk .pos{border-top:1px dashed var(--line);padding-top:8px;margin-top:4px;display:grid;gap:4px}
+.flash-up{animation:fu .6s} .flash-down{animation:fd .6s}
+@keyframes fu{from{color:var(--up)}} @keyframes fd{from{color:var(--down)}}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.n{text-align:right;white-space:nowrap}
+td.t{white-space:nowrap}
+.side{font-weight:600;font-size:12px;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.side.achat{background:var(--accent-bg);color:var(--accent)}
+.side.vente{background:var(--line);color:var(--fg)}
+.side.info{background:var(--warn-bg);color:var(--warn)}
+.empty{color:var(--muted);padding:12px 0}
+.controls{display:flex;flex-wrap:wrap;gap:8px}
+button{font:inherit;font-size:14px;font-weight:500;padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--panel)}
+button:disabled{opacity:.5;cursor:default}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px 20px;margin:0;padding:0;list-style:none;font-size:14px}
+.rules li{min-width:0}
+.rules b{display:block;font-size:13px}
+.rules span{color:var(--muted);font-size:13px}
+.btres{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.note{font-size:13px;color:var(--muted);max-width:70ch}
+#tv{height:440px}
+@media (max-width:500px){#tv{height:340px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div>
+      <h1>Bot d'entraînement crypto</h1>
+      <div class="tags">
+        <span class="pill fake">ARGENT FICTIF</span>
+        <span class="pill real">PRIX RÉELS EN DIRECT</span>
+        <span class="pill wait" id="status"><span class="dot"></span><span id="statusTxt">Chargement…</span></span>
+      </div>
+    </div>
+    <div class="note num" id="lastRun"></div>
+  </div>
+
+  <div id="banner" hidden></div>
+
+  <section class="kpis">
+    <div class="kpi"><div class="l">Valeur du portefeuille (en direct)</div><div class="v num" id="kEq">—</div><div class="s">Départ : 1 000,00 €</div></div>
+    <div class="kpi"><div class="l">Résultat total</div><div class="v num" id="kTot">—</div><div class="s" id="kTotS">&nbsp;</div></div>
+    <div class="kpi"><div class="l">Résultat aujourd'hui</div><div class="v num" id="kDay">—</div><div class="s">Arrêt automatique à −5 %</div></div>
+    <div class="kpi"><div class="l">Trades terminés</div><div class="v num" id="kTr">0</div><div class="s" id="kTrS">Aucun pour l'instant</div></div>
+    <div class="kpi"><div class="l">Si tu avais juste acheté et gardé</div><div class="v num" id="kBh">—</div><div class="s">Même répartition, sans bot</div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Évolution du portefeuille</h2>
+    <canvas id="chart" aria-label="Courbe de la valeur du portefeuille"></canvas>
+  </section>
+
+  <section>
+    <h2>Marchés en direct</h2>
+    <div class="markets" id="markets"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Graphique TradingView</h2>
+    <div class="controls" id="tvBtns" style="margin-bottom:10px"></div>
+    <div id="tv"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Journal des décisions</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Heure</th><th>Action</th><th>Crypto</th><th style="text-align:right">Prix</th><th style="text-align:right">Montant</th><th style="text-align:right">Gain / perte</th><th>Pourquoi</th></tr></thead>
+      <tbody id="journal"></tbody>
+    </table></div>
+  </section>
+
+  <section class="panel">
+    <h2>Règles de sécurité (codées en dur)</h2>
+    <ul class="rules">
+      <li><b>Pas d'effet de levier</b><span>Impossible de perdre plus que la mise. Le portefeuille ne peut pas passer sous 0.</span></li>
+      <li><b>25 % maximum par crypto</b><span>Jamais tout l'argent sur une seule position.</span></li>
+      <li><b>Stop-loss à −2 %</b><span>Chaque position est vendue si elle perd 2 %.</span></li>
+      <li><b>Objectif à +4 %</b><span>La position est vendue si elle gagne 4 %.</span></li>
+      <li><b>Arrêt du jour à −5 %</b><span>Tout est vendu et le bot attend le lendemain.</span></li>
+      <li><b>Coupe-circuit à −20 %</b><span>Tout est vendu et le bot s'arrête définitivement.</span></li>
+      <li><b>Frais simulés</b><span>0,1 % par ordre + 0,05 % de glissement, comme sur un vrai compte.</span></li>
+    </ul>
+    <p class="note" style="margin-top:14px"><b>La stratégie :</b> toutes les 5 minutes, le bot compare la moyenne des prix récents (9 bougies) à une moyenne plus lente (21 bougies). Il achète quand la rapide passe au-dessus de la lente et que la tendance de fond (50 bougies) monte. Il vend au croisement inverse, au stop-loss ou à l'objectif. Les stop-loss sont vérifiés sur le plus bas atteint pendant chaque bougie, donc aucune chute n'est ratée entre deux passages.</p>
+  </section>
+
+  <section class="panel" style="display:grid;gap:10px">
+    <h2>Test sur le passé</h2>
+    <p class="note">Rejoue la même stratégie sur les 14 derniers jours de vrais prix, pour voir ce qu'elle aurait donné. Un bon résultat passé ne garantit rien pour la suite.</p>
+    <div><button id="btnBt" type="button" class="primary">Lancer le test sur 14 jours</button></div>
+    <div id="btOut" class="btres" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2>Piloter le bot</h2>
+    <p class="note">Le bot tourne tout seul sur les serveurs de GitHub, toutes les 5 minutes, même quand ton téléphone et ton ordinateur sont éteints. Cette page affiche les prix et la valeur du portefeuille en direct.</p>
+    <p class="note"><b>Mettre en pause :</b> ouvre la <a id="lnkActions" target="_blank" rel="noopener">page du bot sur GitHub</a>, bouton « … » puis « Disable workflow ». « Enable workflow » le relance.<br>
+    <b>Remettre à zéro :</b> sur la même page, « Run workflow », coche « Remettre le portefeuille à 1 000 € fictifs », puis « Run workflow ».</p>
+  </section>
+</div>
+
+<script src="bot/engine.js"></script>
+<script>
+const {PAIRS,RULES,CANDLE_MS}=Engine;
+const OWNER=location.hostname.endsWith('.github.io')?location.hostname.split('.')[0]:'PILOWEB';
+const REPO=(location.hostname.endsWith('.github.io')&&location.pathname.split('/').filter(Boolean)[0])||'bot-trading-fictif';
+const STATE_URL=`https://raw.githubusercontent.com/${OWNER}/${REPO}/data/state.json`;
+document.getElementById('lnkActions').href=`https://github.com/${OWNER}/${REPO}/actions/workflows/bot.yml`;
+
+const eur=new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'});
+const pct=v=>(v>=0?'+':'')+(v*100).toFixed(2).replace('.',',')+' %';
+const signed=v=>(v>=0?'+':'')+eur.format(v);
+const qtyFmt=v=>v.toLocaleString('fr-FR',{maximumFractionDigits:6});
+const timeFmt=t=>new Date(t).toLocaleString('fr-FR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+const $=id=>document.getElementById(id);
+const nameOf=s=>PAIRS.find(p=>p.s===s)?.name||s;
+function setTone(el,v){el.classList.toggle('up',v>0);el.classList.toggle('down',v<0);}
+
+let S=null,stateErr=false;
+const live={},lastShown={},change24={};
+let lastTick=0;
+
+/* ---------- État du bot (enregistré par GitHub Actions) ---------- */
+async function loadState(){
+  try{
+    const r=await fetch(STATE_URL+'?t='+Date.now(),{cache:'no-store'});
+    if(!r.ok) throw new Error(r.status);
+    S=await r.json();stateErr=false;
+  }catch(e){stateErr=true;}
+  render();
+}
+
+/* ---------- Prix en direct : Kraken (chaque transaction), Binance en secours ---------- */
+let wsFails=0;
+function connectKraken(){
+  let ws;
+  try{ws=new WebSocket('wss://ws.kraken.com/v2');}catch(e){return connectBinance();}
+  ws.onopen=()=>ws.send(JSON.stringify({method:'subscribe',params:{channel:'ticker',symbol:PAIRS.map(p=>p.ws)}}));
+  ws.onmessage=ev=>{
+    let m;try{m=JSON.parse(ev.data);}catch(e){return;}
+    if(m.channel!=='ticker'||!m.data) return;
+    for(const d of m.data){const p=PAIRS.find(x=>x.ws===d.symbol);if(!p) continue;live[p.s]=+d.last;change24[p.s]=d.change_pct/100;lastTick=Date.now();}
+    wsFails=0;
+  };
+  ws.onclose=()=>{wsFails++;setTimeout(wsFails>3?connectBinance:connectKraken,Math.min(2000*wsFails,30000));};
+  ws.onerror=()=>{try{ws.close();}catch(e){}};
+}
+function connectBinance(){
+  const streams=PAIRS.map(p=>p.s.toLowerCase()+'@aggTrade').join('/');
+  const ws=new WebSocket('wss://data-stream.binance.vision/stream?streams='+streams);
+  ws.onmessage=ev=>{let d;try{d=JSON.parse(ev.data).data;}catch(e){return;}if(d&&d.p){live[d.s]=+d.p;lastTick=Date.now();}};
+  ws.onclose=()=>{wsFails=0;setTimeout(connectKraken,5000);};
+}
+
+function prices(){const p={...(S?.prices||{})};for(const k in live) p[k]=live[k];return p;}
+
+/* ---------- Affichage ---------- */
+function render(){
+  const st=$('status'),txt=$('statusTxt');
+  if(!S){
+    st.className='pill '+(stateErr?'bad':'wait');
+    txt.textContent=stateErr?'Le bot n\'a pas encore démarré':'Chargement…';
+    if(stateErr){$('banner').hidden=false;$('banner').className='banner info';$('banner').textContent='Aucune donnée du bot pour l\'instant. Le premier passage a lieu dans les 5 à 15 minutes qui suivent la mise en ligne.';}
+    renderMarkets();return;
+  }
+  const px=prices(),eq=Engine.equityOf(S.book,px),tot=eq-RULES.startCash,day=eq-(S.day?.equity??RULES.startCash);
+  $('kEq').textContent=eur.format(eq);
+  $('kTot').textContent=signed(tot);setTone($('kTot'),tot);
+  $('kTotS').textContent=pct(tot/RULES.startCash)+' depuis le '+new Date(S.start).toLocaleDateString('fr-FR');
+  $('kDay').textContent=signed(day);setTone($('kDay'),day);
+  const sells=S.book.trades.filter(t=>t.side==='vente'),wins=sells.filter(t=>t.pnl>0).length;
+  $('kTr').textContent=sells.length;
+  $('kTrS').textContent=sells.length?`${wins} gagnant${wins>1?'s':''}, ${sells.length-wins} perdant${sells.length-wins>1?'s':''}`:'Aucun pour l\'instant';
+  if(S.startPrices){const r=PAIRS.reduce((a,p)=>a+(px[p.s]/S.startPrices[p.s]-1),0)/PAIRS.length;$('kBh').textContent=pct(r);setTone($('kBh'),r);}
+
+  const age=Date.now()-S.lastRun,mins=Math.floor(age/60000);
+  $('lastRun').textContent=`Dernier passage du bot : ${mins<1?'à l\'instant':'il y a '+mins+' min'} · prix ${S.source||''}`;
+  let cls='ok',t='Bot actif';
+  if(S.halted==='total'){cls='bad';t='Coupe-circuit';}
+  else if(S.halted==='day'){cls='bad';t='Arrêté pour aujourd\'hui';}
+  else if(age>30*60000){cls='bad';t='Bot en retard';}
+  else if(age>12*60000){cls='wait';t='Bot actif (GitHub en retard)';}
+  st.className='pill '+cls;txt.textContent=t;
+  const b=$('banner');
+  if(S.halted==='total'){b.hidden=false;b.className='banner';b.textContent='Le coupe-circuit s\'est déclenché : le portefeuille a perdu 20 %. Tout a été vendu. Remets à zéro pour recommencer (voir « Piloter le bot » en bas de page).';}
+  else if(S.halted==='day'){b.hidden=false;b.className='banner';b.textContent='Perte du jour de 5 % atteinte. Tout a été vendu, le bot reprend automatiquement demain.';}
+  else if(age>30*60000){b.hidden=false;b.className='banner info';b.textContent='Le bot n\'a pas tourné depuis plus de 30 minutes. GitHub a parfois du retard. S\'il ne repart pas dans l\'heure, vérifie qu\'il n\'est pas en pause (voir « Piloter le bot »).';}
+  else b.hidden=true;
+  renderMarkets();renderJournal();drawChart();
+}
+function renderMarkets(){
+  const box=$('markets');
+  if(!box.children.length){
+    box.innerHTML=PAIRS.map(p=>`<div class="panel mk">
+      <div class="head"><span class="name">${p.name} <span style="color:var(--muted);font-weight:400">${p.tk}/EUR</span></span><span class="num" id="ch-${p.s}" style="font-size:13px"></span></div>
+      <div class="price num" id="px-${p.s}">—</div>
+      <div class="row"><span>Signal du bot</span><span id="sg-${p.s}">—</span></div>
+      <div id="ps-${p.s}"></div></div>`).join('');
+  }
+  const px=prices();
+  for(const p of PAIRS){
+    const v=px[p.s];if(v==null) continue;
+    const el=$('px-'+p.s),prev=lastShown[p.s];
+    el.textContent=eur.format(v);
+    if(prev!=null&&prev!==v){el.classList.remove('flash-up','flash-down');void el.offsetWidth;el.classList.add(v>prev?'flash-up':'flash-down');}
+    lastShown[p.s]=v;
+    if(change24[p.s]!=null){const ch=$('ch-'+p.s);ch.textContent=pct(change24[p.s])+' sur 24 h';setTone(ch,change24[p.s]);}
+    if(!S) continue;
+    const sig=Engine.signal(S.closes?.[p.s]||[]);
+    $('sg-'+p.s).textContent=!sig?'Calcul…':sig.fastAbove?(sig.trendUp?'Haussier':'Hausse courte, tendance faible'):'Baissier, on attend';
+    const pos=S.book.positions[p.s],ps=$('ps-'+p.s);
+    if(pos){
+      const pl=pos.qty*v-pos.cost;
+      ps.className='pos';
+      ps.innerHTML=`<div class="row"><span>Position ouverte</span><span class="num">${qtyFmt(pos.qty)} ${p.tk}</span></div>
+        <div class="row"><span>Achat à</span><span class="num">${eur.format(pos.entry)}</span></div>
+        <div class="row"><span>Gain / perte (direct)</span><span class="num ${pl>=0?'up':'down'}">${signed(pl)} (${pct(pl/pos.cost)})</span></div>
+        <div class="row"><span>Stop / objectif</span><span class="num">${eur.format(pos.stop)} / ${eur.format(pos.target)}</span></div>`;
+    }else{ps.className='';ps.innerHTML='<div class="row"><span>Position</span><span>Aucune</span></div>';}
+  }
+}
+let journalKey='';
+function renderJournal(){
+  const rows=[...S.book.trades,...S.log].sort((a,b)=>b.time-a.time).slice(0,100);
+  const key=rows.length+':'+(rows[0]?.time||0);
+  if(key===journalKey) return;journalKey=key;
+  const tb=$('journal');
+  if(!rows.some(r=>r.side!=='info')&&rows.length<=1){tb.innerHTML='<tr><td colspan="7" class="empty">Le bot observe le marché. Il n\'a encore pris aucune décision. Il faut parfois attendre plusieurs heures avant un signal.</td></tr>';return;}
+  tb.innerHTML=rows.map(r=>r.side==='info'
+    ?`<tr><td class="num t">${timeFmt(r.time)}</td><td><span class="side info">Info</span></td><td colspan="5">${r.reason}</td></tr>`
+    :`<tr><td class="num t">${timeFmt(r.time)}</td><td><span class="side ${r.side}">${r.side==='achat'?'Achat':'Vente'}</span></td><td>${nameOf(r.s)}</td>
+      <td class="n num">${eur.format(r.price)}</td><td class="n num">${eur.format(r.amount)}</td>
+      <td class="n num ${r.pnl==null?'':r.pnl>=0?'up':'down'}">${r.pnl==null?'—':signed(r.pnl)+' ('+pct(r.pnlPct)+')'}</td><td>${r.reason}</td></tr>`).join('');
+}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function drawChart(){
+  const cv=$('chart'),dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==w*dpr||cv.height!==h*dpr){cv.width=w*dpr;cv.height=h*dpr;}
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const pts=S.equity.slice();
+  pts.push({t:Date.now(),v:Engine.equityOf(S.book,prices())});
+  g.font='12px '+cssVar('--mono');
+  if(pts.length<2){g.fillStyle=cssVar('--muted');g.fillText('La courbe apparaît après quelques passages du bot.',8,h/2);return;}
+  let lo=Math.min(RULES.startCash,...pts.map(p=>p.v)),hi=Math.max(RULES.startCash,...pts.map(p=>p.v));
+  const pad=Math.max((hi-lo)*0.15,2);lo-=pad;hi+=pad;
+  const L=8,R=w-78,T=10,B=h-22;
+  const x=t=>L+(t-pts[0].t)/(pts.at(-1).t-pts[0].t||1)*(R-L),y=v=>B-(v-lo)/(hi-lo)*(B-T);
+  g.strokeStyle=cssVar('--line');g.lineWidth=1;
+  for(let i=0;i<=3;i++){const v=lo+(hi-lo)*i/3,yy=y(v);g.beginPath();g.moveTo(L,yy);g.lineTo(R,yy);g.stroke();g.fillStyle=cssVar('--muted');g.fillText(eur.format(v),R+6,yy+4);}
+  g.setLineDash([4,4]);g.strokeStyle=cssVar('--muted');g.beginPath();g.moveTo(L,y(RULES.startCash));g.lineTo(R,y(RULES.startCash));g.stroke();g.setLineDash([]);
+  const end=pts.at(-1).v,col=end>=RULES.startCash?cssVar('--up'):cssVar('--down');
+  g.beginPath();pts.forEach((p,i)=>i?g.lineTo(x(p.t),y(p.v)):g.moveTo(x(p.t),y(p.v)));
+  g.strokeStyle=col;g.lineWidth=2;g.stroke();
+  g.lineTo(x(pts.at(-1).t),B);g.lineTo(x(pts[0].t),B);g.closePath();g.globalAlpha=.12;g.fillStyle=col;g.fill();g.globalAlpha=1;
+  g.beginPath();g.arc(x(pts.at(-1).t),y(end),3.5,0,7);g.fillStyle=col;g.fill();
+  g.fillStyle=cssVar('--muted');g.fillText(timeFmt(pts[0].t),L,h-4);const lt=timeFmt(pts.at(-1).t);g.fillText(lt,R-g.measureText(lt).width,h-4);
+}
+
+/* ---------- Test sur le passé (prix Binance, même moteur que le bot) ---------- */
+async function klines(s,total){
+  let out=[],end;
+  while(out.length<total){
+    const lim=Math.min(1000,total-out.length);
+    const r=await fetch(`https://data-api.binance.vision/api/v3/klines?symbol=${s}&interval=5m&limit=${lim}`+(end?`&endTime=${end}`:''));
+    if(!r.ok) throw new Error(r.status);
+    const rows=await r.json();if(!rows.length) break;
+    out=rows.map(r=>({t:r[0],o:+r[1],h:+r[2],l:+r[3],c:+r[4],T:r[6]})).concat(out);
+    end=rows[0][0]-1;if(rows.length<lim) break;
+  }
+  return out;
+}
+async function backtest(){
+  const btn=$('btnBt'),out=$('btOut');
+  btn.disabled=true;btn.textContent='Téléchargement des prix…';
+  try{
+    const data={};
+    await Promise.all(PAIRS.map(async p=>{data[p.s]=(await klines(p.s,4032)).filter(c=>c.T<Date.now());}));
+    const times=[...new Set(Object.values(data).flat().map(c=>c.t))].sort((a,b)=>a-b);
+    const idx={};for(const s in data) idx[s]=new Map(data[s].map(c=>[c.t,c]));
+    const book=Engine.newBook(RULES.startCash),closes={},px={},first={};
+    let peak=RULES.startCash,maxDD=0,n=0;
+    for(const t of times){
+      n++;
+      for(const p of PAIRS){
+        const c=idx[p.s].get(t);if(!c) continue;
+        Engine.checkExits(book,p.s,c,t+CANDLE_MS);
+        (closes[p.s]||(closes[p.s]=[])).push(c.c);px[p.s]=c.c;
+        if(n===60) first[p.s]=c.c;
+        if(n>=60) Engine.onCloseDecision(book,p.s,closes[p.s],px,t+CANDLE_MS);
+      }
+      const eq=Engine.equityOf(book,px);peak=Math.max(peak,eq);maxDD=Math.max(maxDD,1-eq/peak);
+    }
+    const eq=Engine.equityOf(book,px),sells=book.trades.filter(t=>t.side==='vente'),wins=sells.filter(t=>t.pnl>0).length;
+    const bh=PAIRS.reduce((a,p)=>a+(px[p.s]/(first[p.s]||px[p.s])-1),0)/PAIRS.length;
+    const days=((times.at(-1)-times[59])/86400000).toFixed(1).replace('.',',');
+    const r=eq/RULES.startCash-1;
+    out.hidden=false;
+    out.innerHTML=[
+      ['Résultat du bot',pct(r),r],['Acheter et garder',pct(bh),bh],
+      ['Trades terminés',String(sells.length),0],['Trades gagnants',sells.length?Math.round(wins/sells.length*100)+' %':'—',0],
+      ['Pire baisse en cours de route',(maxDD>0.0005?'−':'')+(maxDD*100).toFixed(1).replace('.',',')+' %',0],['Période testée',days+' jours',0]
+    ].map(([l,v,tone])=>`<div class="kpi"><div class="l">${l}</div><div class="v num ${tone>0?'up':tone<0?'down':''}">${v}</div></div>`).join('');
+  }catch(e){
+    out.hidden=false;out.innerHTML='<div class="banner">Impossible de télécharger les prix. Vérifie ta connexion internet puis relance le test.</div>';
+  }
+  btn.disabled=false;btn.textContent='Relancer le test sur 14 jours';
+}
+$('btnBt').onclick=backtest;
+
+/* ---------- Graphique TradingView (affichage seulement) ---------- */
+let tvSym='BTCEUR';
+function tvLoad(){
+  if(!window.TradingView){$('tv').innerHTML='<p class="note">Graphique TradingView indisponible pour le moment. Le bot continue de fonctionner.</p>';return;}
+  $('tv').innerHTML='';
+  const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+  new TradingView.widget({container_id:'tv',symbol:'KRAKEN:'+tvSym,interval:'5',timezone:'Europe/Paris',theme:dark?'dark':'light',style:'1',locale:'fr',autosize:true,allow_symbol_change:false});
+  $('tvBtns').innerHTML=PAIRS.map(p=>`<button type="button" class="${p.s===tvSym?'primary':''}" data-s="${p.s}">${p.name}</button>`).join('');
+  $('tvBtns').querySelectorAll('button').forEach(b=>b.onclick=()=>{tvSym=b.dataset.s;tvLoad();});
+}
+(function(){const sc=document.createElement('script');sc.src='https://s3.tradingview.com/tv.js';sc.onload=tvLoad;sc.onerror=tvLoad;document.head.appendChild(sc);})();
+
+/* ---------- Démarrage ---------- */
+window.addEventListener('resize',()=>S&&drawChart());
+loadState();
+setInterval(loadState,60000);
+connectKraken();
+setInterval(()=>{if(S) render(); else renderMarkets();},1000);
+</script>
+</body>
+</html>
